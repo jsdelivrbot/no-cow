@@ -3,15 +3,18 @@
 
 import Control.Concurrent
 import Control.Monad
+import Data.Functor
+import qualified Data.Set as Set
+import Data.Set (Set)
 
 import Haste
 import Haste.Foreign
  
-newtype Pen = Pen Int deriving (Eq, Read, Show, Pack, Unpack)
+newtype Pen = Pen Int deriving (Eq, Read, Show, Pack, Unpack, Ord)
 
-newtype Box = Box String deriving (Eq, Read, Show, Pack, Unpack)
+newtype Box = Box String deriving (Eq, Read, Show, Pack, Unpack, Ord)
 
-newtype Move = Move String deriving (Eq, Read, Show, Pack, Unpack)
+newtype Move = Move String deriving (Eq, Read, Show, Pack, Unpack, Ord)
 
 data CowState = CowState
   { pen1 :: Box
@@ -19,8 +22,7 @@ data CowState = CowState
   , lastPen :: Pen
   , lastBox :: Box
   , is60 :: Bool
-  } deriving (Show, Read, Eq)
-
+  } deriving (Show, Read, Eq, Ord)
 
 -- Get the current state of the maze
 getState :: IO CowState
@@ -59,6 +61,51 @@ randomWalk = do
     executeMove move
     delay 1000 randomWalk
 
+-- ### BACKTRACKING SEARCH ###
+
+cowBox = Box "bGo"
+
+isVictory (CowState first second _ _ _) | cowBox == first && cowBox == second = True
+isVictory _ = False
+
+data Thing = Thing CowState Move [Move]
+
+backtrack :: [Thing] -> (Set CowState) -> IO (Maybe [Move])
+backtrack ((Thing cowState move history) : things) visited = do
+  setState cowState
+  executeMove move
+  state <- getState
+  let newHistory = move : history
+  if (isVictory state) then return $ Just $ reverse newHistory
+  else if (Set.member state visited) then backtrack things visited
+  else do
+    let toThing move = Thing state move newHistory
+    moves <- map toThing <$> possibleMoves
+    backtrack (things ++ moves) $ Set.insert state visited
+backtrack [] _ = return Nothing
+
+startBacktrack :: IO (Maybe [Move])
+startBacktrack = do
+  state <- getState
+  moves <- possibleMoves
+  let things = map (\move -> Thing state move []) moves
+  backtrack things Set.empty
+
+showoff :: IO ()
+showoff = do
+  initial <- getState
+  result <- startBacktrack
+  case result of
+    Nothing -> putStrLn "No solution found!"
+    Just moves -> do
+      putStrLn "Found it! Let's demonstrate."
+      setState initial
+      let dance (move : rest) = do
+            executeMove move
+            delay 1000 $ dance rest
+          dance [] = putStrLn "Done!"
+      dance moves
+
 main = do
   -- export some useful functions, for playing around in the console
   export "printState" $ fmap show getState
@@ -66,5 +113,8 @@ main = do
   export "possibleMoves" $ possibleMoves
   export "executeMove" $ executeMove
   -- start a random walk
-  putStrLn "Loaded; starting random walk."
-  randomWalk
+  export "randomWalk" $ randomWalk
+  export "isVictory" $ isVictory <$> getState
+  export "search" $ showoff
+  export "showBacktrack" $ startBacktrack
+  putStrLn "Loaded! Run Haste.search() to find the solution."
